@@ -49,17 +49,14 @@ namespace dotnet_eureka
 
             internal class Instance
             {
-                private readonly string urlString;
-                private readonly Status status;
-
                 Instance(string urlString, string vipAddress, string status)
                 {
-                    this.status = (Status)Enum.Parse(typeof(Status), status);
-                    this.urlString = urlString + vipAddress + "/";
+                    this.Status = (Status)Enum.Parse(typeof(Status), status);
+                    this.UrlString = urlString + vipAddress + "/";
                 }
 
-                internal Status Status { get { return status; } }
-                internal string UrlString { get { return urlString; } }
+                internal Status Status { get; }
+                internal string UrlString { get; }
             }
         }
     }
