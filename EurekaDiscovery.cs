@@ -67,13 +67,18 @@ namespace dotnet_eureka
         internal class Builder
         {
             string EurekaUrl;
+            IEurekaDiscovery EurekaClient;
             WarnLogger WarnLogger;
-            IEurekaDiscovery HttpClient;
-
 
             public Builder SetEurekaUrl(string eurekaUrl)
             {
                 EurekaUrl = eurekaUrl;
+                return this;
+            }
+
+            public Builder SetEurekaClient(IEurekaDiscovery eurekaDiscovery)
+            {
+                EurekaClient = eurekaDiscovery;
                 return this;
             }
 
@@ -83,23 +88,17 @@ namespace dotnet_eureka
                 return this;
             }
 
-            public Builder SetHttpClient(IEurekaDiscovery httpClient)
-            {
-                HttpClient = httpClient;
-                return this;
-            }
-
             public IEurekaDiscovery Build()
             {
-                if (HttpClient == null)
+                if (EurekaClient == null)
                 {
                     if (string.IsNullOrEmpty(EurekaUrl))
                         throw new ArgumentNullException(nameof(EurekaUrl));
 
-                    HttpClient = new EurekaRestClient(EurekaUrl, WarnLogger);
+                    EurekaClient = new EurekaRestClient(EurekaUrl, WarnLogger);
                 }
 
-                return new EurekaAppCache(HttpClient);
+                return new EurekaAppCache(EurekaClient);
             }
         }
     }
@@ -141,13 +140,13 @@ namespace dotnet_eureka
                 response = HttpRequest(eurekaHost, eurekaPort, path);
             } catch(Exception e)
             {
-                Warn("lookup {0} - Failed against eureka server {1}. Cause {2}. Lookup fails", vip, eurekaHost, e);
+                Warn("lookup {0} - Failed against eureka server {1}. Cause={2}", vip, eurekaHost, e);
                 return null;
             }
 
             if(response.Status != 200)
             {
-                Warn("lookup {0} - Eureka server {1} returned HTTP {2}. Lookup fails", vip, eurekaHost, response.Status);
+                Warn("lookup {0} - Failed because Eureka server {1} returned HTTP {2}", vip, eurekaHost, response.Status);
                 return null;
             }
 
@@ -205,6 +204,11 @@ namespace dotnet_eureka
             return json.Substring(valueStart, valueEnd - valueStart - 1);
         }
 
+        class HttpResponse
+        {
+            internal int Status { get; set; }
+            internal byte[] Content { get; set; }
+        }
 
         HttpResponse HttpRequest(string host, int port, string path)
         {
@@ -226,7 +230,6 @@ namespace dotnet_eureka
             var headers = ParseHeaders(Encoding.ASCII.GetString(rawResponse, 0, index));
 
             response.Status = (int)headers["responseCode"];
-            response.ContentType = (string)headers["Content-Type"];
             response.Content = ReadContent(rawResponse, index + 4, headers);
 
             return response;
@@ -331,13 +334,6 @@ namespace dotnet_eureka
                 }
             }
             return -1;
-        }
-
-        class HttpResponse
-        {
-            internal int Status { get; set; }
-            internal string ContentType { get; set; }
-            internal byte[] Content { get; set; }
         }
     }
 
