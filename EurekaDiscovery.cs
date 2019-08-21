@@ -1,5 +1,9 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Net.Sockets;
+using System.Text;
+
 
 namespace dotnet_eureka
 {
@@ -10,12 +14,14 @@ namespace dotnet_eureka
 
     static class EurekaDiscovery
     {
+        internal delegate void WarnLogger(string format, params object[] args);
+
         internal class App
         {
             static readonly Random random = new Random();
             readonly List<Instance> instances;
 
-            App(List<Instance> vips)
+            internal App(List<Instance> vips)
             {
                 instances = new List<Instance>(vips);
             }
@@ -32,11 +38,9 @@ namespace dotnet_eureka
                 return null;
             }
 
-            static void Shuffle<T>(IList<T> list)
+            void Shuffle<T>(IList<T> list)
             {
-                int n = list.Count;
-                while (n > 1)
-                {
+                for(int n = list.Count; n > 1;) {
                     n--;
                     int k = random.Next(n + 1);
                     T value = list[k];
@@ -49,171 +53,302 @@ namespace dotnet_eureka
 
             internal class Instance
             {
-                Instance(string urlString, string vipAddress, string status)
-                {
-                    this.Status = (Status)Enum.Parse(typeof(Status), status);
-                    this.UrlString = urlString + vipAddress + "/";
-                }
-
                 internal Status Status { get; }
                 internal string UrlString { get; }
+
+                internal Instance(string urlString, string vipAddress, string status)
+                {
+                    Status = (Status)Enum.Parse(typeof(Status), status);
+                    UrlString = urlString + vipAddress + "/";
+                }
+            }
+        }
+
+        internal class Builder
+        {
+            string EurekaUrl;
+            WarnLogger WarnLogger;
+            IEurekaDiscovery HttpClient;
+
+
+            public Builder SetEurekaUrl(string eurekaUrl)
+            {
+                EurekaUrl = eurekaUrl;
+                return this;
+            }
+
+            public Builder SetWarnLogger(WarnLogger warnLogger)
+            {
+                WarnLogger = warnLogger;
+                return this;
+            }
+
+            public Builder SetHttpClient(IEurekaDiscovery httpClient)
+            {
+                HttpClient = httpClient;
+                return this;
+            }
+
+            public IEurekaDiscovery Build()
+            {
+                if (HttpClient == null)
+                {
+                    if (string.IsNullOrEmpty(EurekaUrl))
+                        throw new ArgumentNullException(nameof(EurekaUrl));
+
+                    HttpClient = new EurekaRestClient(EurekaUrl, WarnLogger);
+                }
+
+                return new EurekaAppCache(HttpClient);
             }
         }
     }
 
-    
-        
-    class HttpClient : IEurekaDiscovery
+    class EurekaRestClient : IEurekaDiscovery
     {
+        readonly string QUERY_APP_PATH = "/eureka/apps/{vip}";
+        readonly EurekaDiscovery.WarnLogger Warn = (f, a) => { };
+        readonly string eurekaHost;
+        readonly int eurekaPort;
 
-        //private static final Logger LOG = LoggerFactory.getLogger(HttpClient.class);
-        //private final String eurekaHost;
-
-        //    IConnectionFactory connectionFactory = urlString-> {
-        //        URL url = new URL(urlString);
-        //        return (HttpURLConnection) url.openConnection();
-        //};
-
-        //@FunctionalInterface
-        //    interface IConnectionFactory
-        //{
-        //    HttpURLConnection getConnection(String urlString) throws IOException;
-        //}
-
-        internal HttpClient(String eurekaHost)
+        internal EurekaRestClient(String host, EurekaDiscovery.WarnLogger warnLogger)
         {
-            //Preconditions.checkNotNull(eurekaHost, "eurekaHost cannot be null");
-            //Preconditions.checkArgument(!eurekaHost.isEmpty(), "eurekaHost cannot be empty");
+            if (string.IsNullOrEmpty(host))
+                throw new ArgumentNullException(nameof(host));
 
-            //if (eurekaHost.endsWith("/"))
-            //{
-            //    this.eurekaHost = eurekaHost;
-            //}
-            //else
-            //{
-            //    this.eurekaHost = eurekaHost + "/";
-            //}
+            var parts = host.Split(":");
+            if(parts.Length > 1)
+            {
+                eurekaHost = parts[0];
+                eurekaPort = int.Parse(parts[1]);
+            }
+            else
+            {
+                eurekaHost = host;
+                eurekaPort = 80;
+            }
+
+            if (warnLogger != null)
+                Warn = warnLogger;
         }
 
         public EurekaDiscovery.App Lookup(string vip)
         {
-            //String url = eurekaHost + "apps/" + vip;
-            //HttpURLConnection conn = null;
-            //try
-            //{
-            //    conn = connectionFactory.getConnection(url);
-            //    conn.setConnectTimeout(5000);
-            //    conn.setReadTimeout(5000);
-            //    conn.setRequestProperty("Accept", "application/json");
-
-            //    int responseCode = conn.getResponseCode();
-            //    if (responseCode != 200)
-            //    {
-            //        LOG.warn("lookup {} - Eureka server {} returned HTTP {}. Lookup fails", vip, eurekaHost, responseCode);
-            //        return Optional.empty();
-            //    }
-
-            //    return Optional.ofNullable(parseJsonResponseFrom(conn));
-            //}
-            //catch (MalformedURLException e)
-            //{
-            //    LOG.warn("lookup {} - Invalid Eureka server url {}", vip, url, exceptionOrNull(e));
-            //}
-            //catch (ConnectException e)
-            //{
-            //    LOG.warn("lookup {} - Could not connect to eureka server {}", vip, eurekaHost, exceptionOrNull(e));
-            //}
-            //catch (SocketTimeoutException e)
-            //{
-            //    LOG.warn("lookup {} - Eureka server {} timed out.", vip, eurekaHost, exceptionOrNull(e));
-            //}
-            //catch (IOException e)
-            //{
-            //    LOG.warn("lookup {} - Eureka server {} failed. Cause: {}", vip, eurekaHost, e.getMessage(), exceptionOrNull(e));
-            //}
-            //finally
-            //{
-            //    if (conn != null)
-            //    {
-            //        conn.disconnect();
-            //    }
-            //}
-            //return Optional.empty();
-            return null;
-        }
-
-        //Throwable exceptionOrNull(Throwable e)
-        //{
-        //    return LOG.isTraceEnabled() ? e : null;
-        //}
-
-        //    App parseJsonResponseFrom(HttpURLConnection conn) throws IOException
-        //    {
-        //            try (Reader in = new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8)) {
-        //                return new App(readAppInstances(in));
-        //            }
-        //        }
-
-        //        private List<App.Instance> readAppInstances(Reader reader)
-        //{
-        //    JsonReader jsonReader = new JsonReader(reader);
-        //    JsonObject response = new JsonParser().parse(jsonReader).getAsJsonObject();
-        //    JsonObject application = response.getAsJsonObject("application");
-        //    JsonArray instances = application.getAsJsonArray("instance");
-
-        //    List<App.Instance> result = new ArrayList<>();
-        //    for (JsonElement instanceElement : instances)
-        //    {
-        //        JsonObject instanceObject = instanceElement.getAsJsonObject();
-        //        result.add(new App.Instance(
-        //                instanceObject.get("homePageUrl").getAsString(),
-        //                instanceObject.get("vipAddress").getAsString(),
-        //                instanceObject.get("status").getAsString()));
-        //    }
-
-        //    return result;
-        //}
-    }
-
-    internal class EurekaDiscoveryBuilder
-    {
-        string EurekaUrl;
-        IEurekaDiscovery HttpClient;
-
-
-        public EurekaDiscoveryBuilder SetEurekaUrl(string eurekaUrl)
-        {
-            this.EurekaUrl = eurekaUrl;
-            return this;
-        }
-
-        public EurekaDiscoveryBuilder SetHttpClient(IEurekaDiscovery httpClient)
-        {
-            this.HttpClient = httpClient;
-            return this;
-        }
-
-        public IEurekaDiscovery Build()
-        {
-            if (HttpClient == null)
+            string path = QUERY_APP_PATH.Replace("{vip}", vip);
+            HttpResponse response;
+            try
             {
-                if (string.IsNullOrEmpty(EurekaUrl))
-                    throw new ArgumentNullException(nameof(EurekaUrl));
-
-                HttpClient = new HttpClient(EurekaUrl);
+                response = HttpRequest(eurekaHost, eurekaPort, path);
+            } catch(Exception e)
+            {
+                Warn("lookup {0} - Failed against eureka server {1}. Cause {2}. Lookup fails", vip, eurekaHost, e);
+                return null;
             }
 
-            return new EurekaAppCache(HttpClient);
+            if(response.Status != 200)
+            {
+                Warn("lookup {0} - Eureka server {1} returned HTTP {2}. Lookup fails", vip, eurekaHost, response.Status);
+                return null;
+            }
+
+            return ParseJsonResponseFrom(response.Content);
+        }
+
+        EurekaDiscovery.App ParseJsonResponseFrom(byte[] data)
+        {
+            string json = Encoding.UTF8.GetString(data);
+            int instancesStart = json.IndexOf("[{", StringComparison.Ordinal);
+            int instancesEnd = json.IndexOf("}]", StringComparison.Ordinal);
+            if (instancesStart < 0 || instancesEnd < 0)
+                return new EurekaDiscovery.App(new List<EurekaDiscovery.App.Instance>());
+
+            var instanceSlices = json.Substring(instancesStart, instancesEnd - instancesStart).Split("},{");
+
+            var instances = new List<EurekaDiscovery.App.Instance>();
+            foreach (var i in instanceSlices)
+                instances.Add(ReadAppInstance(i));
+
+            return new EurekaDiscovery.App(instances);
+        }
+
+        EurekaDiscovery.App.Instance ReadAppInstance(string instance)
+        {
+            return new EurekaDiscovery.App.Instance(
+                    ReadStringProperty(instance, "homePageUrl"),
+                    ReadStringProperty(instance, "vipAddress"),
+                    ReadStringProperty(instance, "status"));
+        }
+
+        string ReadStringProperty(string json, string name)
+        {
+            int idx = json.IndexOf(name, StringComparison.Ordinal);
+            if (idx < 0)
+                return null;
+
+            idx += name.Length + 1;
+            while (char.IsWhiteSpace(json[idx])) { idx++; }
+
+            if (json[idx] != ':')
+                throw new Exception("Expected ':' while looking for property " + name);
+
+            idx++;
+            while (char.IsWhiteSpace(json[idx])) { idx++; }
+
+            if(json[idx] != '\"')
+                throw new Exception("Expected '\"' while reading the value of property " + name);
+
+            idx++;
+            int valueStart = idx;
+            while (json[idx++] != '\"') { }
+            int valueEnd = idx;
+
+            return json.Substring(valueStart, valueEnd - valueStart - 1);
+        }
+
+
+        HttpResponse HttpRequest(string host, int port, string path)
+        {
+            HttpResponse response = new HttpResponse();
+            byte[] rawResponse;
+            using (var tcp = new TcpClient(host, port))
+            using (var stream = tcp.GetStream())
+            {
+                tcp.SendTimeout = 500;
+                tcp.ReceiveTimeout = 1000;
+
+                var requestHeaders = SetupRequestHeaders(host, path);
+                stream.Write(requestHeaders, 0, requestHeaders.Length);
+
+                rawResponse = ReceiveResponse(stream);
+            }
+
+            var index = BinaryMatch(rawResponse, 0, Encoding.ASCII.GetBytes("\r\n\r\n")); 
+            var headers = ParseHeaders(Encoding.ASCII.GetString(rawResponse, 0, index));
+
+            response.Status = (int)headers["responseCode"];
+            response.ContentType = (string)headers["Content-Type"];
+            response.Content = ReadContent(rawResponse, index + 4, headers);
+
+            return response;
+        }
+
+        byte[] SetupRequestHeaders(string host, string path)
+        {
+            var builder = new StringBuilder();
+            builder.AppendLine("GET " + path + " HTTP/1.1");
+            builder.AppendLine("Host: " + host);
+            builder.AppendLine("Accept: application/json");
+            builder.AppendLine("Connection: close");
+            builder.AppendLine();
+            return Encoding.ASCII.GetBytes(builder.ToString());
+        }
+
+        byte[] ReceiveResponse(NetworkStream stream)
+        {
+            using (var memory = new MemoryStream())
+            {
+                stream.CopyTo(memory);
+                memory.Position = 0;
+                return memory.ToArray();
+            }
+        }
+
+        Dictionary<string, object> ParseHeaders(string headers)
+        {
+            var result = new Dictionary<string, object>();
+            var headersArray = headers.Split("\r\n");
+            foreach (string header in headersArray)
+            {
+                if(header.StartsWith("HTTP/1.1", StringComparison.Ordinal))
+                {
+                    result.Add("responseCode", int.Parse(header.Split(" ")[1]));
+                }
+                else
+                {
+                    int separator = header.IndexOf(":", StringComparison.Ordinal);
+                    result.Add(header.Substring(0, separator), header.Substring(separator + 2));
+                }
+            }
+            return result;
+        }
+
+        byte[] ReadContent(byte[] rawResponse, int index, Dictionary<string, object> headers)
+        {
+            if (headers.ContainsKey("Transfer-Encoding") && "chunked".Equals(headers["Transfer-Encoding"]))
+            {
+                return ReadChunked(rawResponse, index);
+            }
+
+            // plain content, no encoding, no compression etc
+            var content = new byte[rawResponse.Length - index];
+            rawResponse.CopyTo(content, index);
+            return content;
+        }
+
+        byte[] ReadChunked(byte[] data, int offset)
+        {
+            using (var buffer = new MemoryStream())
+            {
+                byte[] EOL = Encoding.ASCII.GetBytes("\r\n");
+                int chunkStart = offset;
+                int chunkSize;
+
+                while (true)
+                {
+                    int idx = BinaryMatch(data, chunkStart, EOL);
+                    chunkSize = idx > 0 ? Convert.ToInt32(Encoding.ASCII.GetString(data, chunkStart, idx - chunkStart), 16) : 0;
+
+                    if (chunkSize == 0)
+                        break;
+
+                    buffer.Write(data, idx + EOL.Length, chunkSize);
+
+                    chunkStart = idx + EOL.Length + chunkSize + EOL.Length;
+                }
+
+                buffer.Position = 0;
+                return buffer.ToArray();
+            }
+        }
+
+        private int BinaryMatch(byte[] input, int offset, byte[] pattern)
+        {
+            int sLen = input.Length + offset - pattern.Length + 1;
+            for (int i = offset; i < sLen; ++i)
+            {
+                bool match = true;
+                for (int j = 0; j < pattern.Length; ++j)
+                {
+                    if (input[i + j] != pattern[j])
+                    {
+                        match = false;
+                        break;
+                    }
+                }
+                if (match)
+                {
+                    return i;
+                }
+            }
+            return -1;
+        }
+
+        class HttpResponse
+        {
+            internal int Status { get; set; }
+            internal string ContentType { get; set; }
+            internal byte[] Content { get; set; }
         }
     }
 
     class EurekaAppCache : IEurekaDiscovery
     {
-
+        readonly IEurekaDiscovery Discovery;
         //private final LoadingCache<String, Optional<App>> appCache;
 
         internal EurekaAppCache(IEurekaDiscovery eurekaClient)
         {
+            Discovery = eurekaClient;
             //this.appCache = CacheBuilder.newBuilder()
             //        .expireAfterWrite(30, TimeUnit.SECONDS)
             //        .build(new CacheLoader<String, Optional<App>>() {
@@ -227,7 +362,7 @@ namespace dotnet_eureka
 
         public EurekaDiscovery.App Lookup(string vip)
         {
-                return null;
+            return Discovery.Lookup(vip);
             //return Optional.ofNullable(vip)
             //        .filter(v-> !Strings.isNullOrEmpty(v))
                     //.flatMap(appCache::getUnchecked);
