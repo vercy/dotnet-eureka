@@ -5,7 +5,7 @@ namespace dotnet_eureka
 {
     class Program
     {
-        const string EUREKA_URL = "eureka.surveysampling.com";         const string VIP = "PROJECT-MEMBER-DETAILS-SERVICE";
+        const string EUREKA_URL = "";         const string VIP = "";
 
         static void Main(string[] args)
         {
