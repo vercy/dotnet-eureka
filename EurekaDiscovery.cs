@@ -14,7 +14,11 @@ namespace dotnet_eureka
 
     static class EurekaDiscovery
     {
-        internal delegate void WarnLogger(string format, params object[] args);
+        internal interface ILogger
+        {
+            void Warn(string format, params object[] args);
+            void Debug(string format, params object[] args);
+        }
 
         internal class App
         {
@@ -68,7 +72,8 @@ namespace dotnet_eureka
         {
             string EurekaUrl;
             IEurekaDiscovery EurekaClient;
-            WarnLogger WarnLogger;
+            ILogger Logger;
+            TimeSpan? CacheExpiration;
 
             public Builder SetEurekaUrl(string eurekaUrl)
             {
@@ -82,9 +87,15 @@ namespace dotnet_eureka
                 return this;
             }
 
-            public Builder SetWarnLogger(WarnLogger warnLogger)
+            public Builder SetLogger(ILogger logger)
             {
-                WarnLogger = warnLogger;
+                Logger = logger;
+                return this;
+            }
+
+            public Builder SetCacheExiration(TimeSpan timeSpan)
+            {
+                CacheExpiration = timeSpan;
                 return this;
             }
 
@@ -95,22 +106,28 @@ namespace dotnet_eureka
                     if (string.IsNullOrEmpty(EurekaUrl))
                         throw new ArgumentNullException(nameof(EurekaUrl));
 
-                    EurekaClient = new EurekaRestClient(EurekaUrl, WarnLogger);
+                    EurekaClient = new EurekaRestClient(EurekaUrl, Logger);
                 }
 
-                return new EurekaAppCache(EurekaClient);
+                return new EurekaAppCache(EurekaClient, Logger, CacheExpiration);
             }
         }
+    }
+
+    class NoopLogger : EurekaDiscovery.ILogger
+    {
+        public void Warn(string format, params object[] args) { }
+        public void Debug(string format, params object[] args) { }
     }
 
     class EurekaRestClient : IEurekaDiscovery
     {
         readonly string QUERY_APP_PATH = "/eureka/apps/{vip}";
-        readonly EurekaDiscovery.WarnLogger Warn = (f, a) => { };
+        readonly EurekaDiscovery.ILogger Log;
         readonly string eurekaHost;
         readonly int eurekaPort;
 
-        internal EurekaRestClient(String host, EurekaDiscovery.WarnLogger warnLogger)
+        internal EurekaRestClient(String host, EurekaDiscovery.ILogger logger)
         {
             if (string.IsNullOrEmpty(host))
                 throw new ArgumentNullException(nameof(host));
@@ -127,8 +144,7 @@ namespace dotnet_eureka
                 eurekaPort = 80;
             }
 
-            if (warnLogger != null)
-                Warn = warnLogger;
+            Log = logger ?? new NoopLogger();
         }
 
         public EurekaDiscovery.App Lookup(string vip)
@@ -140,13 +156,13 @@ namespace dotnet_eureka
                 response = HttpRequest(eurekaHost, eurekaPort, path);
             } catch(Exception e)
             {
-                Warn("lookup {0} - Failed against eureka server {1}. Cause={2}", vip, eurekaHost, e);
+                Log.Warn("lookup {0} - Failed against eureka server {1}. Cause={2}", vip, eurekaHost, e);
                 return null;
             }
 
             if(response.Status != 200)
             {
-                Warn("lookup {0} - Failed because Eureka server {1} returned HTTP {2}", vip, eurekaHost, response.Status);
+                Log.Warn("lookup {0} - Failed because Eureka server {1} returned HTTP {2}", vip, eurekaHost, response.Status);
                 return null;
             }
 
@@ -339,30 +355,63 @@ namespace dotnet_eureka
 
     class EurekaAppCache : IEurekaDiscovery
     {
-        readonly IEurekaDiscovery Discovery;
-        //private final LoadingCache<String, Optional<App>> appCache;
+        private static readonly TimeSpan DEFAULT_CACHE_EXPIRATION = TimeSpan.FromSeconds(30);
+        private static readonly EurekaDiscovery.App EMPTY_CLUSTER = new EurekaDiscovery.App(new List<EurekaDiscovery.App.Instance>());
 
-        internal EurekaAppCache(IEurekaDiscovery eurekaClient)
+        readonly TimeSpan CacheExpiration = TimeSpan.FromSeconds(30);
+        readonly EurekaDiscovery.ILogger Log;
+        readonly IEurekaDiscovery Discovery;
+        readonly Dictionary<string, CachedApp> Cache;
+
+        internal EurekaAppCache(IEurekaDiscovery eurekaClient, EurekaDiscovery.ILogger logger, TimeSpan? cacheExpiration)
         {
             Discovery = eurekaClient;
-            //this.appCache = CacheBuilder.newBuilder()
-            //        .expireAfterWrite(30, TimeUnit.SECONDS)
-            //        .build(new CacheLoader<String, Optional<App>>() {
-            //                    @Override
-            //                    public Optional<App> load(String vip)
-            //{
-            //    return eurekaClient.lookup(vip);
-            //}
-            //});
+            Log = logger ?? new NoopLogger();
+            Cache = new Dictionary<string, CachedApp>();
+            CacheExpiration = cacheExpiration.GetValueOrDefault(DEFAULT_CACHE_EXPIRATION);
         }
 
         public EurekaDiscovery.App Lookup(string vip)
         {
-            return Discovery.Lookup(vip);
-            //return Optional.ofNullable(vip)
-            //        .filter(v-> !Strings.isNullOrEmpty(v))
-                    //.flatMap(appCache::getUnchecked);
+            if (string.IsNullOrEmpty(vip))
+                return null;
+
+            DateTime now = DateTime.Now;
+            CachedApp value = ComputeIfAbsent(vip);
+            if (value.Expiration.CompareTo(now) < 0)
+                lock(value)
+                {
+                    if (value.Expiration.CompareTo(now) >= 0)
+                        return value.App; // refreshed on a separate thread
+
+                    Log.Debug("EurekaAppCache - Loading vip {0}", vip);
+                    value.App = Discovery.Lookup(vip);
+                    value.Expiration = now.Add(CacheExpiration);
+                }
+
+            return value.App;
         }
 
+        CachedApp ComputeIfAbsent(string vip)
+        {
+            lock(Cache)
+            {
+                Cache.TryGetValue(vip, out CachedApp value);
+                if (value != null)
+                    return value; // got created on another thread
+
+                Log.Debug("EurekaAppCache - Registering vip {0}", vip);
+                value = new CachedApp { Expiration = DateTime.MinValue, App = EMPTY_CLUSTER };
+                Cache.Add(vip, value);
+                return value;
+            }
+        }
+
+        class CachedApp
+        {
+            // these need to be fields to get synchronization on get/set
+            internal DateTime Expiration;
+            internal EurekaDiscovery.App App;
+        }
     }
 }
